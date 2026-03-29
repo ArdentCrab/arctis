@@ -1,0 +1,799 @@
+# Arctis Pipeline Specification v1.2 (Engine-aligned)
+**pipeline:** pipeline-a  
+**status:** stable (an **Arctis Engine** Python-Implementierung und **Engine Spec v1.5** angeglichen)  
+**author:** Noah  
+
+**Cross-Reference:** Technische Tiefe zu IR, Security und Marketplace siehe `docs/arctis_engine_and_security_spec_v1.5.md`. Dieses Dokument ist die **Pipeline‑A Produkt‑/Policy‑Spezifikation** mit exakter Abbildung auf die **jetzigen Engine‑Schnittstellen**.
+
+---
+
+## Purpose
+Diese Spezifikation beschreibt die vollständige Architektur, Module, Policies, DSL und das Produkt‑Design der **Pipeline A**.  
+Sie dient als:
+- Technische Referenz für die Implementierung  
+- Einheitliche Sprache für Cursor‑basierte Entwicklungen  
+- Grundlage für alle zukünftigen Pipelines (Pipeline B, etc.)  
+- Engine‑kompatibles Policy‑Set  
+
+**Ausführungspfad (Implementierung):** `parse_pipeline` → `check_pipeline` → `generate_ir` → `optimize_ir` → `Engine.run(IRPipeline, tenant_context, …)`.
+
+---
+
+## Architecture Overview
+Pipeline A besteht aus **6 Layern** (Produktlogik); die **Engine** mappt diese auf **Compiler + IR + Runtime**:
+
+| Layer | Beschreibung | Engine‑Zuordnung |
+|-------|----------------|------------------|
+| 1. Input Layer | Sanitizer, Schema‑Validation, Prompt‑Sanitization, Forbidden‑Fields, Budget‑Limits, Residency‑Enforcement | **ComplianceEngine** (Budget, Residency, Resource‑Limits), **AITransform** (Secrets im Prompt), Vorverarbeitung als **`module`‑Steps** oder extern vor `Engine.run` |
+| 2. AI Decision Layer | Deterministischer LLM‑Aufruf, Output‑Validation, Confidence‑Thresholds, Weighted Routing (optional) | **`ai`**‑Steps (`AITransform`); Validierung/Routing als **`module`** oder Folge‑Graph |
+| 3. Routing Layer | Entscheidungs‑Routing zu Effect‑Chains (approve, reject, manual_review) | **IR‑DAG** (`IRNode.next`); kein eigener Step‑Typ `router` — Verzweigung über Graph‑Topologie |
+| 4. Effects Layer | Ausführung von Effekten (HTTP, SQL, Email, Webhook, etc.) mit Idempotenz & Saga‑Rollback | **`effect`** (`EffectEngine`), **`saga`** (`SagaEngine`) |
+| 5. Audit & Replay Layer | Audit‑Reports (JSON/PDF), Snapshot‑Speicherung, Snapshot‑Replay, Observability (Logs, Traces) | **`AuditBuilder`**, **`SnapshotStore`**, **`ObservabilityTracker`**; Replay via `Engine.run(..., snapshot_replay_id=...)` |
+| 6. Deployment & Config Layer | Self‑Service‑Wizard, Konfigurations‑UI, Versioning, Zero‑Maintenance‑Architektur | Produkt/Control‑Plane; **ModuleRegistry** für signierte Marketplace‑Module |
+
+Alle Layer sind **engine‑kompatibel** und auf **Zero‑Maintenance** ausgelegt.
+
+---
+
+## Engine: Pflicht‑Schnittstellen (Single Source of Truth)
+
+Dieser Abschnitt benennt **alle** für Pipeline A relevanten öffentlichen Schnittstellen der aktuellen Python‑Engine (`arctis.engine`, `arctis.compiler`).
+
+### Compiler & IR
+| Schnittstelle | Signatur / Struktur | Rolle |
+|---------------|---------------------|--------|
+| `parse_pipeline` | `(pipeline_definition: str \| dict) -> PipelineAST` | Akzeptiert **dict** mit `name`, `steps` (Liste von Steps) oder **einzeiligen** Pipeline‑Namen (ohne Steps). |
+| `check_pipeline` | `(ast: PipelineAST) -> None` | Strukturvalidierung (einzigartige Namen, `next`‑Referenzen, keine Zyklen). |
+| `generate_ir` | `(ast: PipelineAST) -> IRPipeline` | Lowering zu Graph: `IRNode(name, type, config, next: list[str])`, `entrypoints`. |
+| `optimize_ir` | `(ir: IRPipeline) -> IRPipeline` | Erreichbare Knoten, normalisierte Kanten, deterministische Ordnung. |
+| `StepAST` | `name, type, config: dict, next: str \| None` | Ein Step; flache Zusatzfelder werden in `config` gemerged. |
+| `IRNode` | wie oben; `next` ist **Liste** (derzeit pro Step typisch ein Ziel). |
+| `IRPipeline` | `name, nodes: dict[str, IRNode], entrypoints: list[str]` | Eingabe für `Engine.run`. |
+
+### Laufzeit‑Schritttypen (`IRNode.type`)
+Nur diese vier Typen werden von `Engine.run` ausgeführt:
+
+| `type` | Pflicht‑`config` / Semantik |
+|--------|-----------------------------|
+| `ai` | `input` (beliebig), `prompt` (str). Optional weitere Keys nach Schema‑Erweiterung. |
+| `effect` | Dict für `EffectEngine`: `type` ∈ `{write, delete, upsert}`, `key` (str, nicht leer), `value`. |
+| `saga` | `action`: dict, `compensation`: dict (beide Pflicht nach `SagaEngine.validate_compensation`). |
+| `module` | `using`: registrierter Modulname (String); Signaturprüfung über `ModuleRegistry.verify_signature`. |
+
+### Tenant‑Kontext (`TenantContext`)
+Pflichtattribute für `Engine.run` (Validierung in `runtime._validate_tenant_context`):
+
+| Attribut | Typ | Bedeutung |
+|----------|-----|-----------|
+| `tenant_id` | `str` | Mandanten‑Isolation (Snapshots, Observability, Effects‑Lookup). |
+| `data_residency` | `str` | Muss zu **`Engine.ai_region`** passen für AI (`AITransform.enforce_boundaries`); Default `"US"`. |
+| `budget_limit` | `float \| None` | Obergrenze für **simulierte** CPU‑Kosten (`ComplianceEngine.enforce_budget`). |
+| `resource_limits` | `dict` oder Objekt mit `cpu` / `memory` / `time` bzw. `max_wall_time_ms` | Grenzen für simulierte CPU, Speicher, Laufzeit. |
+| `dry_run` | `bool` | Im Kontext vorhanden (Compliance‑Tests); Persistenz von Effekten gemäß Suite/Policy. |
+
+Zusätzlich nutzt die Engine intern **`Engine.service_region`** (z. B. `set_service_region`) für **`ComplianceEngine.enforce_residency`** gegenüber `tenant_context.data_residency`.
+
+### Engine‑Klasse (`Engine`) — öffentliche API
+| Methode | Zweck |
+|---------|--------|
+| `run(ir, tenant_context, snapshot_replay_id=None) -> RunResult` | Haupteintritt; bei gesetztem `snapshot_replay_id` Replay aus `SnapshotStore` (Tenant‑Check). |
+| `get_snapshot(tenant_context, snapshot_id)` | Snapshot lesen (Tenant‑Isolation). |
+| `get_effects(tenant_context, run_id=None)` | Effect‑Store (Tenant/Run‑Isolation). |
+| `observability_trace(tenant_context, run_id)` | Observability‑Payload pro Run. |
+| `build_audit_report(...)` | Vollständiger Report (10 Positionsargumente) oder Kurzform löst `ComplianceError` aus — siehe Implementierung. |
+| `load_module(...)` / `tamper_module(...)` | Marketplace‑Module laden / Test‑Tampering. |
+| `set_ai_region` / `set_service_region` | Region für AI bzw. Service für Residency. |
+| `set_simulated_*_for_next_run` | CPU, Speicher, Laufzeit für nächsten Lauf (deterministische Kosten). |
+| `inject_failure` / `inject_compensation_failure` | Test‑Hooks für Saga. |
+| `collect_ai_transform_prompts` | Gesammelte Prompts der letzten AI‑Steps. |
+
+### Subsysteme (Implementierungskontrakte)
+| Komponente | Kern‑API |
+|------------|----------|
+| `AITransform` | `validate_schema`, `enforce_boundaries`, `run_transform` → deterministisches `{"result": "deterministic:<sha256>"}`. |
+| `EffectEngine` | `validate_effect`, `is_idempotent`, `apply_effect` → Records mit `key`, `type`, `value`, `version`, `idempotent`. |
+| `SagaEngine` | `validate_compensation`, `execute_saga`, `rollback`. |
+| `ComplianceEngine` | `enforce_budget`, `enforce_residency`, `enforce_resource_limits`. |
+| `SnapshotStore` | `save_snapshot`, `load_snapshot`, `list_snapshots` — Payload: `pipeline_name`, `tenant_id`, `execution_trace`, `output`. |
+| `AuditBuilder` | `build_report(ir, tenant_context, run_id, snapshot_id, execution_trace, effects, output, observability, compliance_info, timestamp)`. |
+| `ObservabilityTracker` | `record_step`, `build_trace` → `{dag, steps}`. |
+| `PerformanceTracker` | `compute_step_costs`, `compute_cost`, `record_usage`. |
+| `ModuleRegistry` | `load_module`, `verify_signature` (unsigned / mismatch → `SecurityError`). |
+
+### `RunResult` (Ausgabe von `Engine.run`)
+Felder: `output`, `effects`, `snapshots` (Handle mit `id` / `primary_id`), `execution_trace` (`RunTrace` mit `run_id`), `audit_report`, `observability`, `cost`, `step_costs`, `cost_breakdown`.
+
+### Ausnahmen
+`SecurityError`, `ComplianceError`, `SagaError` (`arctis.errors`); Validierungsfehler oft `ValueError`. Produkt‑Error‑Codes (`ARCTIS_*`) unten sind **normativ** für API‑Layer; die Engine mappt semantisch auf diese Meldungen/Exceptions.
+
+---
+
+## Policies (gruppiert)
+
+### Prompt Policy
+- Prompts dürfen **keine dynamischen Felder** enthalten, die nicht im Input‑Schema definiert sind.
+- Prompts müssen **deterministisch** sein (keine Zufallselemente außerhalb von `temperature=0`).
+- Jede Änderung am Prompt erzeugt eine neue Pipeline‑Version.
+- Snapshots referenzieren exakt die Prompt‑Version, die beim Run verwendet wurde (Produkt); technisch speichert der Snapshot **`output`** und **`execution_trace`** (erweiterbar um Prompt‑Version in `AuditBuilder`/Metadaten).
+
+### Effect Policy
+- Jeder Effect muss **idempotent** sein (gleiche `key` + gleiche semantische Wirkung — Engine: `EffectEngine.is_idempotent`).
+- Jeder Effect muss eine **kompensierende Aktion** definieren (für Saga‑Rollback), falls er nicht rein lesend ist — technisch über **`saga`**‑Steps mit `compensation`.
+- Effects dürfen **keine AI‑Calls** enthalten.
+- **Whitelist (Engine):** erlaubte `type`‑Werte: `write`, `delete`, `upsert`.
+
+### Routing Policy
+- Routing darf **keine dynamischen Modelle** aktivieren (Ausnahme: Multi‑Model‑Upsell, das explizit aktiviert sein muss).
+- Routing muss **deterministisch** sein (gleicher Confidence‑Wert führt immer zum gleichen Ziel) — im IR: feste Kanten, deterministische Step‑Reihenfolge (`sorted` Nachfolger in der Queue).
+- Routing‑Entscheidungen werden im Snapshot festgehalten und sind replay‑fähig (über gespeicherten `output` / Trace).
+
+### Security Policy
+- **Keine Secrets** im Prompt, im Audit‑Report, im Snapshot, in Logs, in Effect‑Payloads.
+- Secrets (LLM‑Keys, Arctis‑Keys) werden nur im verschlüsselten Key‑Store gehalten und niemals im Klartext geloggt.
+- Alle externen Aufrufe (LLM, Effects) müssen über TLS 1.3 erfolgen (Produkt/Deployment); Engine: `AITransform.enforce_boundaries` prüft **verbotene Secret‑Strings** in `Engine.forbidden_secrets`.
+
+### Versioning Policy
+- Jede Änderung an einer Pipeline (Prompt, Schema, Routing, Effects) erzeugt eine neue **immutable Version**.
+- Versionen folgen **Semantic Versioning** (`major.minor.patch`).
+- Snapshots referenzieren die exakte Pipeline‑Version (Produkt); IR‑`name` ist der Pipeline‑Name im Compiler.
+- Replays nutzen dieselbe Version wie der Original‑Run (über `snapshot_replay_id`).
+
+### Workflow Policy
+- Workflows speichern wiederverwendbare Pipeline‑Ausführungen.
+- Workflows bestehen aus: Name, Pipeline‑ID, Pipeline‑Version, Input‑Template, Metadata.
+- Workflows dürfen keine Pipeline‑Konfiguration überschreiben.
+- Workflows sind pipeline‑versioned und immutable.
+- Workflows sind tenant‑scoped.
+- Workflows dürfen keine Secrets enthalten.
+- Workflows müssen deterministisch bleiben.
+- Workflows dürfen nur Felder enthalten, die im Input‑Schema der Pipeline definiert sind.
+
+### Operational Policies
+- **Retry Policy**: max_retries 3, exponentieller Backoff (100ms, 300ms, 900ms), retry_on: Netzwerk‑Timeouts, 5xx‑Fehler.
+- **Circuit Breaker**: failure_threshold 5 innerhalb 60s, open_after 30s, reset_after 30s.
+- **Rate‑Limit**: pro Tenant 1000/min, pro Pipeline 100/min, pro API‑Key 200/min.
+
+### Testing Policies
+- **Unit Test Policy**: Jedes Modul muss Unit‑Tests für Determinismus, Fehler‑Codes, Idempotenz haben.
+- **Integration Test Policy**: Jede Pipeline‑Version durchläuft End‑to‑End‑Tests mit Mock‑LLM und Mock‑Effects.
+- **Replay Test Policy**: Jeder Test‑Snapshot muss replizierbar sein (identisches Ergebnis) — Engine: `Engine.run(..., snapshot_replay_id=...)`.
+
+### Future‑Proofing Rules
+- Neue Upsells als **Modul** definieren, optional aktivierbar, Policies einhaltend (`ModuleRegistry` + signierte Artefakte).
+- Neue Pipelines als eigenständige Specs, können auf Module von Pipeline A zurückgreifen.
+- Engine‑Updates abwärtskompatibel; bei Breaking Changes neue `major`‑Version, alte bleibt für existierende Pipelines erhalten.
+
+---
+
+## Module Definitions (alphabetisch)
+
+Jedes Modul folgt diesem Schema:
+
+```md
+### Module: <name>
+type: <input|ai|routing|effect|audit|config>
+status: default|optional|upsell
+description: <kurze Beschreibung>
+
+inputs:
+  - <feld>: <typ>
+outputs:
+  - <feld>: <typ>
+
+policies:
+  - <policy 1>
+  - <policy 2>
+
+engine:
+  compatible: true|false
+  notes: <engine‑spezifische Hinweise>
+
+errors:
+  - <error_case>
+```
+
+### Default Module (immer enthalten)
+
+#### Module: ai_decision
+type: ai  
+status: default  
+description: Deterministischer LLM‑Aufruf (Transform).  
+inputs: `input: any`, `prompt: string`  
+outputs: `result: string` (deterministischer Hash‑String in aktueller Engine)  
+policies:  
+  - temperature = 0 (Produkt; Engine liefert deterministischen Output unabhängig von echtem LLM im Stub)  
+  - Data‑Residency: `tenant_context.data_residency` ≡ `Engine.ai_region`  
+  - keine Secrets in `prompt` (`forbidden_secrets`)  
+engine: compatible: true  
+notes: IR‑`type`: **`ai`**; Konfiguration siehe `AITransform`.  
+errors: `ARCTIS_AI_001` (model_error), `ARCTIS_AI_002` (invalid_output_schema)
+
+#### Module: ai_output_validator
+type: ai  
+status: default  
+description: Validiert LLM‑Output gegen Schema.  
+inputs: `output: object`  
+outputs: `validated_output: object`  
+policies:  
+  - Schema aus Pipeline‑Config  
+engine: compatible: true  
+notes: Als **`module`**‑Step mit `using: <validator>@…>` oder Erweiterung von `AITransform`; derzeit Konzept/Produkt.  
+errors: `ARCTIS_AI_003` (output_schema_mismatch)
+
+#### Module: audit_reporter
+type: audit  
+status: default  
+description: Erzeugt Audit‑Berichte und speichert Snapshots.  
+inputs: `run_context: object`  
+outputs: `report_url: string`, `snapshot_id: string`  
+policies:  
+  - JSON‑Report immer, PDF optional  
+  - Snapshot enthält Input, Prompt, Modell‑ID, Seed, Temperatur, Output, Effects‑Logs (Produkt); Engine: `SnapshotStore` + `AuditBuilder`  
+engine: compatible: true  
+errors: `ARCTIS_AUDIT_001` (report_generation_failed)
+
+#### Module: budget_limiter
+type: input  
+status: default  
+description: Bricht Pipeline ab, wenn Kostenlimit überschritten wird.  
+inputs: `estimated_cost: number`, `limit: number`  
+outputs: `status: string`  
+policies:  
+  - Pre‑flight Schätzung (Token)  
+  - Post‑flight Check  
+engine: compatible: true  
+notes: Umsetzung über **`ComplianceEngine.enforce_budget`** und simulierte Kosten (`set_simulated_cpu_units_for_next_run`).  
+errors: `ARCTIS_INPUT_006` (budget_exceeded)
+
+#### Module: confidence_router
+type: routing  
+status: default  
+description: Entscheidet basierend auf Confidence über das Ziel (approve, reject, manual_review).  
+inputs: `confidence: number`  
+outputs: `route: string`  
+policies:  
+  - thresholds: approve >= 0.7, reject <= 0.3, sonst manual_review  
+  - thresholds sind pro Pipeline konfigurierbar  
+engine: compatible: true  
+notes: **Kein** eigener IR‑Typ; Abbildung als **verzweigter DAG** (`next`) oder **`module`**, das Routen berechnet.  
+errors: `ARCTIS_ROUTING_001` (invalid_threshold)
+
+#### Module: effect_executor
+type: effect  
+status: default  
+description: Führt eine Effect‑Chain aus.  
+inputs: `effects: list`, `context: object`  
+outputs: `results: list`  
+policies:  
+  - Idempotenz (`key`‑basiert)  
+  - Saga‑Rollback bei Fehlern  
+engine: compatible: true  
+notes: IR‑`type`: **`effect`**; ein Step pro logischem Effect oder Sequenz über Graph.  
+errors: `ARCTIS_EFFECT_001` (effect_failed), `ARCTIS_EFFECT_002` (rollback_failed)
+
+#### Module: forbidden_fields_enforcer
+type: input  
+status: default  
+description: Stellt sicher, dass bestimmte Felder nicht im Prompt erscheinen.  
+inputs: `prompt: string`, `forbidden_fields: list`  
+outputs: `enforced_prompt: string`  
+policies:  
+  - Kann strenger sein als Sanitizer  
+  - Entfernt Felder, nicht nur maskieren  
+engine: compatible: true  
+notes: Ergänzt `AITransform` / Modul vor AI; Engine unterstützt `forbidden_secrets` Listen auf Prompt‑Ebene.  
+errors: `ARCTIS_INPUT_005` (forbidden_field_in_prompt)
+
+#### Module: prompt_sanitizer
+type: input  
+status: default  
+description: Entfernt Prompt‑Injection‑Patterns.  
+inputs: `prompt_template: string`, `context: object`  
+outputs: `sanitized_prompt: string`  
+policies:  
+  - Standard‑Filterliste („Ignore previous instructions“, System‑Prompt‑Überschreibungen)  
+  - Optional erweiterbar durch Kunde  
+engine: compatible: true  
+notes: Typisch **`module`** oder Preprocessing außerhalb der Engine.  
+errors: `ARCTIS_INPUT_004` (prompt_injection_detected)
+
+#### Module: residency_enforcer
+type: input  
+status: default  
+description: Wählt LLM‑Endpunkt basierend auf Region aus.  
+inputs: `request: object`, `allowed_regions: list`  
+outputs: `selected_endpoint: string`  
+policies:  
+  - Mapping von API‑Keys zu Regionen  
+  - Fallback auf andere Region, falls erlaubt  
+engine: compatible: true  
+notes: **`ComplianceEngine.enforce_residency`** (Tenant `data_residency` vs `Engine.service_region`); AI: **`AITransform.enforce_boundaries`** (Tenant vs `ai_region`).  
+errors: `ARCTIS_INPUT_007` (no_endpoint_in_region)
+
+#### Module: sanitizer
+type: input  
+status: default  
+description: Entfernt oder maskiert Felder basierend auf Kunden‑Regeln.  
+inputs: `raw_input: object`  
+outputs: `sanitized_input: object`  
+policies:  
+  - darf keine neuen Felder hinzufügen  
+  - muss deterministisch sein  
+  - Pfad‑basiertes Redact (JSON‑Path)  
+engine: compatible: true  
+notes: Als **`module`** oder Vorverarbeitung.  
+errors: `ARCTIS_INPUT_001` (forbidden_field_detected), `ARCTIS_INPUT_002` (invalid_json)
+
+#### Module: schema_validator
+type: input  
+status: default  
+description: Validiert Input gegen JSON‑Schema.  
+inputs: `input: object`  
+outputs: `validated_input: object`  
+policies:  
+  - Schema muss vom Kunden definiert werden  
+  - Kann deaktiviert werden  
+engine: compatible: true  
+notes: Als **`module`**‑Step; Compiler validiert nur Pipeline‑Struktur, nicht JSON‑Schema.  
+errors: `ARCTIS_INPUT_003` (schema_validation_failed)
+
+#### Module: workflow_manager
+type: config  
+status: default  
+description: Ermöglicht Kunden, wiederverwendbare Workflows für Pipelines zu speichern.  
+inputs:
+  - pipeline_id: string
+  - pipeline_version: string
+  - input_template: object
+  - metadata: object
+outputs:
+  - workflow_id: string
+policies:
+  - Workflows sind pipeline‑versioned (immutable)
+  - Workflows sind tenant‑scoped
+  - Workflows dürfen keine Secrets enthalten
+  - Workflows dürfen nur Felder enthalten, die im Input‑Schema der Pipeline definiert sind
+engine:
+  compatible: true
+  notes: Workflows sind reine Konfiguration; sie erzeugen keine Engine‑Steps, füllen aber **`ai`‑`input`** / Kontext beim Aufruf.
+errors:
+  - `ARCTIS_WORKFLOW_001` (invalid_template)
+  - `ARCTIS_WORKFLOW_002` (pipeline_version_not_found)
+  - `ARCTIS_WORKFLOW_003` (forbidden_field_in_workflow)
+  - `ARCTIS_WORKFLOW_004` (workflow_name_conflict)
+
+---
+
+### Upsell Modules (Optional / Bezahlt)
+
+#### Module: advanced_integrations
+type: effect  
+status: upsell  
+description: Erweiterte Integrationen (Slack, Teams, Jira, ServiceNow, HubSpot, Pipedrive, Notion, Airtable, Google Sheets, PostgreSQL Advanced, MySQL Advanced).  
+engine: compatible: true  
+notes: Müssen als **`effect`**‑Konfiguration oder externe Connectors abbildbar sein; Idempotenz‑Policy bleibt.
+
+#### Module: analytics_pack
+type: optional  
+status: upsell  
+description: Erweiterte Analytics und Drift‑Monitoring.  
+features:
+  - Decision‑Trends
+  - Confidence‑Heatmaps
+  - Drift‑Alerts
+  - Token‑Cost‑Analytics
+  - Latenz‑Analytics
+  - Error‑Analytics
+engine: compatible: true  
+notes: Nutzt **`ObservabilityTracker`** / `audit_report` als Datenbasis.
+
+#### Module: multi_model_engine
+type: ai  
+status: upsell  
+description: Multi‑Model Fallback, Cost‑Optimized Routing, Region Switching.  
+policies:
+  - Model‑Switching muss deterministisch sein
+  - Fallback‑Kette muss definiert sein
+  - Residency wird weiterhin eingehalten
+engine: compatible: true  
+notes: Erweiterung um **`ai`**‑Konfiguration und Policy‑Schicht; keine zweite AI‑Instanz ohne Review.
+
+---
+
+## Key Management Policy
+
+### Customer LLM Keys
+- Kunden müssen eigene LLM‑Keys eintragen (OpenAI, Anthropic, Azure, Gemini, Mistral).
+- Keys werden **verschlüsselt** gespeichert (AES‑256, tenant‑separat).
+- Keys können rotiert werden; alte Keys werden nach definierter Frist gelöscht.
+- Keys sind **tenant‑scoped** und dürfen nicht zwischen Tenants geteilt werden.
+- Keys werden **nie geloggt**.
+- Pro Key können Modelle und erlaubte Regionen definiert werden.
+
+### Arctis API Key
+- Jeder Kunde erhält einen eigenen Arctis‑Key (tenant‑scoped).
+- Der Key ist **pipeline‑scoped** (kann auf eine oder mehrere Pipelines beschränkt werden).
+- Key ist rotierbar.
+- Key wird für alle API‑Aufrufe verwendet (Ausführung, Konfiguration, Audit‑Abruf).
+- Key darf nicht zwischen Tenants geteilt werden.
+
+---
+
+## Technical Details
+
+### Database Schema (PostgreSQL / kompatibel)
+
+```sql
+-- tenants
+CREATE TABLE tenants (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- pipeline_versions (immutable)
+CREATE TABLE pipeline_versions (
+    id UUID PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id),
+    pipeline_id UUID NOT NULL,
+    version TEXT NOT NULL,        -- semver
+    config JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(tenant_id, pipeline_id, version)
+);
+
+-- pipelines (current version pointer)
+CREATE TABLE pipelines (
+    id UUID PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id),
+    name TEXT NOT NULL,
+    current_version_id UUID REFERENCES pipeline_versions(id),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- snapshots
+CREATE TABLE snapshots (
+    id UUID PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id),
+    pipeline_id UUID REFERENCES pipelines(id),
+    pipeline_version_id UUID REFERENCES pipeline_versions(id),
+    snapshot_data JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- audit_reports (JSON, PDF stored in S3, reference in DB)
+CREATE TABLE audit_reports (
+    id UUID PRIMARY KEY,
+    snapshot_id UUID REFERENCES snapshots(id),
+    report_type TEXT,             -- 'json', 'pdf'
+    storage_url TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- api_keys (Arctis keys)
+CREATE TABLE api_keys (
+    id UUID PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id),
+    key_hash TEXT NOT NULL UNIQUE,
+    pipeline_ids JSONB,           -- []UUID or null for all
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- llm_keys (customer keys, encrypted)
+CREATE TABLE llm_keys (
+    id UUID PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id),
+    provider TEXT NOT NULL,
+    encrypted_key TEXT NOT NULL,
+    models JSONB,                 -- allowed models
+    regions JSONB,                -- allowed regions
+    created_at TIMESTAMP DEFAULT NOW(),
+    rotated_at TIMESTAMP
+);
+
+-- workflows
+CREATE TABLE workflows (
+    id UUID PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id),
+    name TEXT NOT NULL,
+    pipeline_id UUID REFERENCES pipelines(id),
+    pipeline_version_id UUID REFERENCES pipeline_versions(id),
+    input_template JSONB NOT NULL,
+    metadata JSONB,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(tenant_id, name)
+);
+
+-- effect_logs (for observability)
+CREATE TABLE effect_logs (
+    id UUID PRIMARY KEY,
+    snapshot_id UUID REFERENCES snapshots(id),
+    effect_type TEXT,
+    status TEXT,
+    error_code TEXT,
+    duration_ms INTEGER,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+**Hinweis Engine‑Snapshot (In‑Memory):** Felder `pipeline_name`, `tenant_id`, `execution_trace`, `output` — bei Persistenz in JSONB zu übernehmen.
+
+### API Design (REST)
+
+| Endpoint | Method | Beschreibung |
+|----------|--------|--------------|
+| `/pipelines/{id}/execute` | POST | Führt Pipeline mit gegebenem Input aus. Body: `{"input": {...}}`. Returns: `decision`, `confidence`, `snapshot_id`, `audit_url`. |
+| `/pipelines/{id}/audit/{run_id}` | GET | Liefert Audit‑Report (JSON). Optional `?format=pdf`. |
+| `/pipelines/{id}/versions` | POST | Erstellt eine neue Pipeline‑Version aus der aktuellen Konfiguration. |
+| `/keys/llm` | POST | Speichert einen neuen LLM‑Key (verschlüsselt). |
+| `/keys/arctis/rotate` | POST | Rotiert den Arctis‑Key des Tenants. Gibt neuen Key zurück. |
+| `/snapshots/{id}/replay` | POST | Replay eines Snapshots. Liefert identische Entscheidung (Engine: gleiche Logik wie `Engine.run(..., snapshot_replay_id=...)`). |
+| `/workflows` | GET | Liste aller Workflows des Tenants. |
+| `/workflows` | POST | Erstellt einen Workflow. Body: `{name, pipeline_id, pipeline_version, input_template, metadata}`. |
+| `/workflows/{id}/run` | POST | Führt Workflow aus. Body: `{variables}` (füllt Input‑Template). Returns wie `/pipelines/execute`. |
+| `/workflows/{id}` | PUT | Aktualisiert Workflow (nur name/metadata, nicht pipeline/version/template). |
+| `/workflows/{id}` | DELETE | Löscht Workflow. |
+
+**Engine‑Eintritt (aktuell):** Python `Engine.run(IRPipeline, tenant_context, snapshot_replay_id=None)` — REST ist die geplante/parallele Produkt‑Hülle.
+
+### Error Codes (normiert)
+
+| Code | Bedeutung | Engine‑Zuordnung (typisch) |
+|------|-----------|----------------------------|
+| `ARCTIS_INPUT_001` | forbidden_field_detected | Modul / Policy |
+| `ARCTIS_INPUT_002` | invalid_json | Parser außerhalb Compiler |
+| `ARCTIS_INPUT_003` | schema_validation_failed | Modul |
+| `ARCTIS_INPUT_004` | prompt_injection_detected | Modul |
+| `ARCTIS_INPUT_005` | forbidden_field_in_prompt | Policy / `AITransform` |
+| `ARCTIS_INPUT_006` | budget_exceeded | `ComplianceError` (budget) |
+| `ARCTIS_INPUT_007` | no_endpoint_in_region | Residency / Deployment |
+| `ARCTIS_AI_001` | model_error | AI‑Provider |
+| `ARCTIS_AI_002` | invalid_output_schema | `AITransform` |
+| `ARCTIS_AI_003` | output_schema_mismatch | Validator‑Modul |
+| `ARCTIS_ROUTING_001` | invalid_threshold | Konfiguration |
+| `ARCTIS_EFFECT_001` | effect_failed | `SecurityError` / Effect |
+| `ARCTIS_EFFECT_002` | rollback_failed | Saga / `RuntimeError` injiziert |
+| `ARCTIS_AUDIT_001` | report_generation_failed | Audit‑Pfad |
+| `ARCTIS_WORKFLOW_001` | invalid_template | Control‑Plane |
+| `ARCTIS_WORKFLOW_002` | pipeline_version_not_found | Control‑Plane |
+| `ARCTIS_WORKFLOW_003` | forbidden_field_in_workflow | Control‑Plane |
+| `ARCTIS_WORKFLOW_004` | workflow_name_conflict | Control‑Plane |
+
+### Logging Format (JSON)
+```json
+{
+  "timestamp": "2026-03-21T12:34:56Z",
+  "tenant_id": "uuid",
+  "snapshot_id": "uuid",
+  "module": "ai_decision",
+  "severity": "info",
+  "message": "LLM call succeeded",
+  "duration_ms": 123,
+  "metadata": {}
+}
+```
+
+### Tracing (OpenTelemetry)
+- Jede Pipeline‑Ausführung erhält eine eindeutige Trace‑ID (Produkt).
+- Jedes Modul erzeugt Spans mit `span_id`, `parent_span_id`.
+- Spans enthalten: Modulname, Dauer, Input‑/Output‑Größen, Error‑Code.
+- **Engine‑Observability:** `ObservabilityTracker.build_trace` liefert DAG + Step‑Liste (`duration_ms` pro Step, deterministisch aus simulierter Laufzeit).
+
+---
+
+## Engine Compatibility & Constraints
+
+### Engine‑Step Mapping
+| Spec‑Module | IR/runtime `type` | Notes |
+|-------------|---------------------|-------|
+| ai_decision | `ai` | `AITransform` |
+| ai_output_validator | `module` | `using` → registriertes Validator‑Modul |
+| audit_reporter | audit (system) | `AuditBuilder` + `SnapshotStore`, kein User‑`type` |
+| budget_limiter | (compliance) | `ComplianceEngine.enforce_budget` |
+| confidence_router | — | DAG‑Verzweigung oder `module`; kein `router`‑Typ |
+| effect_executor | `effect` | `EffectEngine` |
+| forbidden_fields_enforcer | `module` / policy | ergänzt AI‑Grenzen |
+| prompt_sanitizer | `module` | |
+| residency_enforcer | (compliance) | `ComplianceEngine` + `AITransform` |
+| sanitizer | `module` | |
+| schema_validator | `module` | |
+| workflow_manager | – | Config only, kein Engine‑Step |
+| Saga / Kompensation | `saga` | `SagaEngine` |
+
+### Engine Constraints
+- AI‑Steps dürfen keine Effects enthalten (eigener `type` `ai` ohne Side‑Effects in einem Step).
+- Effects dürfen keine AI‑Calls enthalten (nur `effect`‑Typ).
+- Routing darf keine AI‑Calls enthalten (Routing = Graph oder `module` ohne AI).
+- Ein **IR‑Knoten** hat genau einen **`type`** aus `{ai, effect, saga, module}`.
+- **`module`** muss `config.using` setzen und im `ModuleRegistry` registriert + signiert sein.
+
+---
+
+## UI Specification
+
+### Dashboard
+- **Pipelines**: Liste aller Pipelines, Status, Version, letzte Ausführung.
+- **Workflows**: Liste aller Workflows (Name, Pipeline, Version, Tags). Aktionen: Run, Edit, Delete.
+- **Recent Runs**: Letzte Ausführungen mit Decision, Confidence, Snapshot‑Link.
+
+### Workflow Creation Screen
+- Name, Beschreibung, Tags (frei).
+- Pipeline auswählen (Dropdown mit Version).
+- Input‑Template definieren (JSON‑Editor oder Formular mit Feldern aus Pipeline‑Input‑Schema). Validierung gegen Schema.
+- Speichern → Workflow‑ID wird erzeugt.
+
+### Workflow Execution Screen
+- Formular basierend auf Workflow‑Template.
+- Variablen werden ausgefüllt (nur die als `{{variable}}` markierten Felder).
+- Button „Run Workflow“ → Ausführung der referenzierten Pipeline.
+- Ergebnisanzeige: Decision, Confidence, Audit‑Link, Snapshot‑ID.
+
+### Workflow Editing Screen
+- Nur Name, Beschreibung, Tags änderbar. Pipeline, Version, Template sind immutable (erfordert neuen Workflow).
+
+### Key Management Screen
+- Liste der LLM‑Keys (Provider, Models, Regions, erstellt am, rotiert am).
+- Button „Add Key“ (Provider, Key, Models, Regions).
+- Button „Rotate“ (ersetzt Key, alte Version wird nach 30 Tagen gelöscht).
+- Button „Delete“.
+
+### Audit Viewer
+- Snapshot‑Liste mit Filtern (Pipeline, Zeitraum).
+- Detailansicht: Input, Output, Prompt, Decision, Confidence, Trace (Spans), Effects‑Logs.
+- Button „Replay“ → startet neuen Run mit identischen Parametern (`snapshot_replay_id`).
+- Download als PDF.
+
+---
+
+## DSL Examples
+
+### Pipeline Definition (Compiler‑Format — JSON / YAML)
+Entspricht `parse_pipeline` (**dict** mit `name` und `steps`). Jeder Step: `name`, `type` (`ai` \| `effect` \| `saga` \| `module`), `config`, optional `next`.
+
+```yaml
+# credit_decision.pipeline.yaml — Pipeline A → Engine IR
+name: credit_decision
+steps:
+  - name: validate_input
+    type: module
+    config:
+      using: "schema.validate@1.0.0"
+    next: decide
+
+  - name: decide
+    type: ai
+    config:
+      input: "{{workflow_input}}"
+      prompt: |
+        Entscheide über den Kreditantrag. Optionen: approve, reject.
+        Eingabe: {{workflow_input}}
+    next: route_placeholder
+
+  - name: route_placeholder
+    type: module
+    config:
+      using: "router.confidence@1.0.0"
+    next: apply_effect
+
+  - name: apply_effect
+    type: effect
+    config:
+      type: write
+      key: "credit:decision:{{id}}"
+      value: "{{decision}}"
+
+  # optional: Saga für kompensierbare Schritte
+  - name: notify_saga
+    type: saga
+    config:
+      action:
+        op: notify
+      compensation:
+        op: rollback_notify
+```
+
+**Hinweis:** `check_pipeline` / `generate_ir` prüfen **nicht**, ob `module`‑Namen im Registry existieren — das erzwingt `Engine.run` über `SecurityError` bei fehlender Registrierung.
+
+### Legacy YAML (Pipeline‑Metadaten + Routing‑Darstellung)
+Die frühere Darstellung mit `config.ai`, `routing.approve` als HTTP/Email bleibt als **Produkt‑/Authoring‑Sicht** gültig; der **Compiler** erwartet die **Step‑Liste** wie oben. Transformation von „routing branches“ → IR‑Graph ist Aufgabe des Pipeline‑Compilers oder der Konfigurations‑UI.
+
+```yaml
+# credit_decision — semantische Pipeline-A Konfiguration (vor Lowering)
+version: "1.0"
+name: credit_decision
+description: "Entscheidet über Kreditanträge"
+
+config:
+  input_schema: "schemas/credit_request.json"
+  forbidden_fields: ["ssn", "dob"]
+  prompt_template: |
+    Entscheide über den Kreditantrag:
+    {{input}}
+    Entscheidungen: approve, reject
+    Begründe kurz.
+  ai:
+    model: "gpt-4"
+    temperature: 0
+    seed: 42
+    confidence_thresholds:
+      approve: 0.7
+      reject: 0.3
+  routing:
+    approve:
+      - type: http
+        url: "https://crm.example.com/approve"
+        method: POST
+        body: "{{decision}}"
+    reject:
+      - type: email
+        to: "credit@example.com"
+        subject: "Ablehnung"
+        body: "{{decision.reason}}"
+    manual_review:
+      - type: slack
+        channel: "#credit-review"
+        message: "Manuelle Prüfung nötig: {{input.id}}"
+  audit:
+    report_format: ["json", "pdf"]
+    snapshot: true
+  observability:
+    logs: true
+    traces: true
+```
+
+### Workflow DSL (YAML)
+```yaml
+# workflow_small_credit.yaml
+workflow:
+  name: "credit_small_amount"
+  pipeline: "credit_decision"
+  version: "1.0.0"
+  input_template:
+    amount: "{{variable}}"
+    country: "DE"
+    customer_id: "{{variable}}"
+  metadata:
+    description: "Kleinkredite unter 1000€"
+    tags: ["credit", "small"]
+```
+
+---
+
+## Onboarding Flow (User Journey)
+1. **Tenant‑Creation**: Kunde registriert sich → neuer Tenant, Arctis‑Key wird generiert.
+2. **LLM‑Key‑Setup**: Kunde fügt eigene LLM‑Keys hinzu (verschlüsselt).
+3. **Erste Pipeline generieren**: Wizard führt durch 10 Fragen → erzeugt Pipeline‑Version 1.0.0 (Compiler‑konformes `steps`‑IR).
+4. **Test‑Run**: Kunde kann einen ersten Run über die API oder UI starten (`Engine.run` / REST).
+5. **Workflow erstellen** (optional): Kunde speichert häufig genutzte Inputs als Workflow.
+6. **Upgrade**: Kunde aktiviert Upsells über das Dashboard.
+
+---
+
+## Product Plan & Pricing
+| Komponente | Preis |
+|------------|-------|
+| Pipeline A (Default) | 199–499 € / Monat |
+| Upsell 1: Analytics Pack | +99–149 € / Monat |
+| Upsell 2: Multi‑Model Pack | +149–249 € / Monat |
+| Upsell 3: Integrations Pack | +199–299 € / Monat |
+
+**Alle Preise:** monatlich, keine Setup‑Gebühren, keine versteckten Kosten.  
+**Upgrades:** Jederzeit möglich, pro‑rata.  
+**Lizenz‑Service:** Prüft bei jedem Pipeline‑Run, ob die aktivierten Upsells lizenziert sind. Fehlende Lizenz führt zu Fehler `ARCTIS_LICENSE_001`.
+
+---
+
+## Version History
+| Version | Datum | Änderung |
+|---------|-------|----------|
+| 1.0 | 2026‑03‑21 | Initiale Spezifikation |
+| 1.1 | 2026‑03‑21 | Umfassende Erweiterung: Policies, DB‑Schema, API, Workflow Manager, Error Codes, Logging, Tracing, Engine Constraints, Operational/Security/Testing Policies, Changelog‑Regeln, Future‑Proofing, Onboarding‑Flow, UI‑Screens |
+| 1.2 | 2026‑03‑21 | Workflow Manager vollständig integriert (DSL, Policy, UI, API, DB, Error‑Codes, Engine‑Mapping). Module alphabetisch sortiert. Policies neu gruppiert. API‑Endpunkte für Workflows erweitert. UI‑Spec mit Workflow‑Details. Changelog aktualisiert. |
+| 1.2‑engine | 2026‑03‑21 | **Engine‑Alignment:** Schnittstellenkatalog (`Engine`, Compiler, IR, TenantContext, Subsysteme), vier Laufzeit‑Step‑Typen, Effect‑Whitelist, kein `router`‑IR‑Typ, DAG‑Routing, RunResult/Snapshot/Audit/Observability, DSL‑Beispiel auf `parse_pipeline`‑Dict‑Format, Fehler‑Mapping, Cross‑Ref zu Engine Spec v1.5. |
+
+---
+
+**Nächste Schritte (optional):**  
+- Bei API‑Launch: OpenAPI mit denselben Feldern wie `RunResult` und `TenantContext`.  
+- Bei Schema‑Erweiterung: `IRNode`/`PipelineAST` um optionale `version`‑Metadaten erweitern — Spec zuerst, dann Code.

@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+
+# Ghost client (local state; never commit)
+.ghost/
+.mypy_cache/
+*.egg-info/
+.eggs/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local databases (SQLite and others)
+*.db
+arctis_dev.db
+alembic_dev.db
+
+# Node / front-end build artifacts (any depth)
+node_modules/
+.next/
+dist/
+
+# Legacy / removed UI trees (do not re-commit)
+dashboard/
+ui/pipeline_a/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editors & OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Coverage / reports (optional local outputs)
+reports/*.json
+htmlcov/

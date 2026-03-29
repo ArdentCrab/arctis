@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arctis.local/schemas/customer-output/v1",
+  "title": "Arctis Customer Output",
+  "description": "End-user-visible workflow result only. Version 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "result"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Customer Output protocol version."
+    },
+    "result": {
+      "description": "Final workflow result: output of the last topological sink node (deterministic Kahn order, lexicographic tie-break). Must not embed governance, audit, cost, run identity, inputs, or model internals."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Optional confidence in [0, 1]."
+    },
+    "score": {
+      "type": "number",
+      "description": "Optional workflow-defined score."
+    },
+    "fields": {
+      "type": "object",
+      "description": "Optional structured facets; keys are strings; values are JSON-compatible and must obey the same non-leaking rules as result."
+    }
+  }
+}

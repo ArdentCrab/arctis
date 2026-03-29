@@ -1,0 +1,14 @@
+{
+  "name": "arctis",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix ui run dev",
+    "test": "npm run test:py && npm run test:ui",
+    "test:py": "python -m pytest tests/integration tests/unit tests/db tests/api",
+    "test:ui": "npm --prefix ui run test",
+    "demo": "python scripts/dev_reset_demo.py",
+    "lint": "npm run lint:py && npm run lint:ui",
+    "lint:py": "python -m ruff check arctis tests scripts",
+    "lint:ui": "npm --prefix ui run lint"
+  }
+}

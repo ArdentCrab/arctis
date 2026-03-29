@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "description": "Default quality matrix for Pipeline A (local in-process runs, deterministic AI when no LLM client).",
+  "mode": "local_pipeline_a",
+  "tenant": {
+    "tenant_id": "quality_matrix",
+    "data_residency": "US",
+    "dry_run": false
+  },
+  "http": {
+    "base_url": "http://127.0.0.1:8000",
+    "api_key": "ARCTIS_DEV_123",
+    "pipeline_id": "1c2e6aa0-6578-47fa-ba78-468988b6fc52"
+  },
+  "cases": [
+    {
+      "id": "deterministic_shape",
+      "input": {
+        "prompt": "Return a concise decision for the request.",
+        "idempotency_key": "qm-det-1",
+        "amount": 42
+      },
+      "expect": {
+        "status": "success",
+        "required_output_keys": ["ai_decide"],
+        "json_paths": {
+          "ai_decide.result": "prefix:deterministic:"
+        },
+        "min_structural_score": 1.0,
+        "min_semantic_score": 0.0,
+        "min_factual_score": 1.0
+      }
+    },
+    {
+      "id": "idempotency_stability",
+      "input": {
+        "prompt": "Classify intent as approve or reject.",
+        "idempotency_key": "qm-idem-2",
+        "customer_id": "c1"
+      },
+      "expect": {
+        "status": "success",
+        "required_output_keys": ["ai_decide"],
+        "min_effects": 1,
+        "min_structural_score": 1.0,
+        "min_semantic_score": 0.0,
+        "min_factual_score": 1.0
+      }
+    },
+    {
+      "id": "reference_copy",
+      "input": {
+        "prompt": "Summarize: Arctis pipelines enforce compliance before effects.",
+        "idempotency_key": "qm-ref-3"
+      },
+      "expect": {
+        "status": "success",
+        "reference_text": "deterministic",
+        "min_semantic_score": 0.12,
+        "required_output_keys": ["ai_decide"],
+        "required_phrases": ["deterministic"],
+        "min_structural_score": 0.0,
+        "min_factual_score": 1.0
+      }
+    }
+  ]
+}

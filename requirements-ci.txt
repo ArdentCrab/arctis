@@ -1,0 +1,3 @@
+# CI: from repo root — `pip install -r requirements-ci.txt`
+# Hashed transitive lock (drift-checked in CI): see requirements-lock.txt and scripts/generate_requirements_lock.*
+.[ci]

@@ -1,0 +1,15 @@
+# Optional — run: pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+  - repo: local
+    hooks:
+      - id: eslint-pipeline-a-ui
+        name: eslint (pipeline_a UI)
+        entry: npm --prefix ui/pipeline_a run lint
+        language: system
+        files: ^ui/pipeline_a/src/
+        pass_filenames: false

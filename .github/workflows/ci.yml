@@ -1,0 +1,51 @@
+# G2: Ruff (nur arctis_ghost + tests/ghost + scripts) + pytest tests/ghost/.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package (editable, ci extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[ci]"
+
+      # Engine-Linting folgt später (siehe CONTRIBUTING.md)
+      - name: Ruff lint
+        run: ruff check arctis_ghost tests/ghost scripts
+
+      - name: Pytest (Ghost)
+        run: python -m pytest tests/ghost/ -q
+
+  # Informativ: bricht den Workflow nicht hart (Supply-Chain-Überblick).
+  pip-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: pip-audit (requirements-lock.txt)
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip-audit -r requirements-lock.txt --desc on

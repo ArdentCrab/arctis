@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arctis"
+version = "0.1.0"
+description = "Arctis API, engine runtime, and Ghost CLI (HTTP client for customer workflows)."
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["arctis", "ghost", "fastapi", "llm", "workflow"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "requests",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings>=2.6",
+    "httpx>=0.27",
+    "cryptography>=42.0",
+    "sentry-sdk[fastapi]>=2.19.0",
+    "prometheus-client>=0.21",
+]
+
+[project.scripts]
+ghost = "arctis_ghost.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "locust", "requests-mock", "ruff"]
+ci = ["pytest", "requests-mock", "ruff"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["arctis*", "arctis_ghost*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["arctis", "arctis_ghost", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]
+"alembic/env.py" = ["E402"]
+"tools/**" = ["E402", "E501"]
+"scripts/**" = ["E402"]
