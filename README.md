@@ -13,6 +13,31 @@
 - **CI:** GitHub Actions laufen automatisch, sobald das Repository auf GitHub gepusht wird. ([`.github/workflows/ci.yml`](.github/workflows/ci.yml) — PRs und Push auf `main`/`master`.) **Release:** bei Tag `v*` bauen [`.github/workflows/release.yml`](.github/workflows/release.yml) (Wheel, sdist, Checksums) und [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) (Push nach **GHCR**). **Security:** [SECURITY.md](SECURITY.md) (Meldeweg), [Gitleaks](.github/workflows/gitleaks.yml) + [`.gitleaks.toml`](.gitleaks.toml).
 - **Release-Tag:** Der Tag `v0.1.0` wird erst gesetzt, nachdem der Staging-E2E-Lauf (G4) erfolgreich abgeschlossen wurde — Checkliste [`docs/ghost_staging_e2e.md`](docs/ghost_staging_e2e.md), Details [`docs/RELEASE.md`](docs/RELEASE.md).
 
+### Pilot (operativ): Gitleaks, ein E2E-Flow, Support-Scope
+
+**A — Gitleaks (Blocker vor Pilot):** Der Workflow [`.github/workflows/gitleaks.yml`](.github/workflows/gitleaks.yml) muss **grün** sein — sonst kein Pilot (Governance / Audit / Vertrauen). Bei Rot: lokal `gitleaks detect --source . --config .gitleaks.toml` ausführen und Befund klären, bevor ihr Kunden einbindet.
+
+**B — Ein End-to-End-Flow (Readiness-Test):** Voraussetzung: erreichbare **Arctis-API**, **`ARCTIS_API_KEY`**, gültige **`workflow_id`** in `ghost.yaml` (nach `init-demo`). Dann im **Ghost-Arbeitsverzeichnis**:
+
+```bash
+ghost init-demo
+ghost doctor
+ghost run input.json
+ghost pull-artifacts <run_id>
+ghost verify <run_id>
+```
+
+(`<run_id>` = Ausgabe von `ghost run`.) Wenn diese Kette funktioniert, ist **Ghost für diesen Pfad** produktiv nutzbar — wichtiger als jede Prozentzahl. Erweiterungen (z. B. `watch` / `explain`): [`docs/arctis_ghost_demo_60.md`](docs/arctis_ghost_demo_60.md).
+
+**C — Support-Scope (Kurz):**
+
+| Thema | Was wir supporten (Open-Source / Pilot) |
+|--------|----------------------------------------|
+| **OS** | **Windows, Linux, macOS** (best effort), wo **Python 3.11+** läuft und die API erreichbar ist; unter Windows bei Bedarf `python -m arctis_ghost …` statt `ghost`. |
+| **Python** | **3.11+** wie in [`pyproject.toml`](pyproject.toml) — das ist der Referenzrahmen für Ghost. |
+| **Ghost** | Nur die **dokumentierte CLI** gegen **eure** Arctis-API ([`docs/ghost_cli_reference.md`](docs/ghost_cli_reference.md)) — **keine** Engine im Client, nur HTTP und lokale Artefakte. |
+| **Full-Stack** | **API + DB + Betrieb** nur im Umfang von [`docs/Deployment.md`](docs/Deployment.md) und [`docs/security_production.md`](docs/security_production.md) — kein implizites globales SaaS, es sei denn, ihr betreibt es selbst und sagt das so. |
+
 ### Verzeichnisse und Kanonik (Ghost)
 
 **Festgelegt: Option A** — eine dokumentierte Layout-Wahrheit für Ghost-Kunden-Workflows; kein zusätzliches `sandbox/`-Verzeichnis im Repository (dafür genügt ein beliebiger Zielordner für `ghost init-demo`).
