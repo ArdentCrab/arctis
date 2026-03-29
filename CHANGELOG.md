@@ -5,6 +5,18 @@ Das Format orientiert sich an [Keep a Changelog](https://keepachangelog.com/de/1
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-03-29
+
+Paketversion in [`pyproject.toml`](pyproject.toml): **0.1.1**.
+
+### Added
+
+- **Docker publish:** `workflow_dispatch` — Image kann in **Actions → Docker publish → Run workflow** gebaut und nach GHCR gepusht werden, ohne neuen Git-Tag (Tags aus `pyproject.toml`-Version).
+
+### Fixed
+
+- Erster GHCR-Build: Workflows laufen zuverlässig nach **neuem Tag** `v0.1.1` (oder manuell wie oben).
+
 ## [0.1.0] — 2026-03-29
 
 Paketversion in [`pyproject.toml`](pyproject.toml): **0.1.0**.

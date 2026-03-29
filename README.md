@@ -7,7 +7,7 @@
 **API und Ghost:** Die **API** ist die autoritative Ausführungs- und Evidence-Quelle; **Ghost** spricht dieselben Endpunkte (`POST …/execute`, `GET /runs/{id}`) und spiegelt Ergebnisse lokal — **eine** Policy- und Nachweis-Wahrheit auf dem Server.
 
 - **Erster Run (≈30 s):** Abschnitt [Try Arctis in 30 seconds](#try-arctis-in-30-seconds) · ausführlicheres 60‑Sekunden-Storyboard: [`docs/arctis_ghost_demo_60.md`](docs/arctis_ghost_demo_60.md).
-- **Version:** siehe [`pyproject.toml`](pyproject.toml) — aktuell **0.1.0** ([`CHANGELOG.md`](CHANGELOG.md)).
+- **Version:** siehe [`pyproject.toml`](pyproject.toml) — aktuell **0.1.1** ([`CHANGELOG.md`](CHANGELOG.md)).
 - **Paketinhalt:** ein Wheel umfasst API-, Engine- und Ghost-Code; Strategie für Publish/Split siehe [`docs/arctis_package_strategy.md`](docs/arctis_package_strategy.md).
 - **CI:** GitHub Actions laufen automatisch, sobald das Repository auf GitHub gepusht wird. ([`.github/workflows/ci.yml`](.github/workflows/ci.yml) — PRs und Push auf `main`/`master`.) **Release:** bei Tag `v*` bauen [`.github/workflows/release.yml`](.github/workflows/release.yml) (Wheel, sdist, Checksums) und [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) (Push nach **GHCR**).
 - **Release-Tag:** Der Tag `v0.1.0` wird erst gesetzt, nachdem der Staging-E2E-Lauf (G4) erfolgreich abgeschlossen wurde — Checkliste [`docs/ghost_staging_e2e.md`](docs/ghost_staging_e2e.md), Details [`docs/RELEASE.md`](docs/RELEASE.md).

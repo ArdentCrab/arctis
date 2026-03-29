@@ -3,7 +3,7 @@
 Kunden können Arctis **ohne** vollen Git-Zugriff nutzen — **Docker-Image**, **Wheel (`pip install`)** oder **eure gehostete API** (SaaS-Betrieb).  
 Diese Seite entspricht **A2.1–A2.3**; das **Onboarding-Kit** liegt unter [`customer/README.md`](customer/README.md) (A2.4).
 
-**Version:** siehe [`pyproject.toml`](../pyproject.toml) (`version = …`, aktuell **0.1.0**). Image- und Wheel-Tags daran ausrichten.
+**Version:** siehe [`pyproject.toml`](../pyproject.toml) (`version = …`, aktuell **0.1.1**). Image- und Wheel-Tags daran ausrichten.
 
 ---
 
@@ -12,7 +12,7 @@ Diese Seite entspricht **A2.1–A2.3**; das **Onboarding-Kit** liegt unter [`cus
 **Offizielles Image (GHCR)** nach Release-Tag — `org`/`repo` entsprechen dem GitHub-Repository (hier: `arctis-engine/arctis` → Registry-Pfad kleingeschrieben):
 
 ```bash
-docker pull ghcr.io/arctis-engine/arctis:0.1.0
+docker pull ghcr.io/arctis-engine/arctis:0.1.1
 # optional, wenn ihr :latest für stabile Tags pflegt (siehe Workflow):
 docker pull ghcr.io/arctis-engine/arctis:latest
 ```
@@ -20,10 +20,10 @@ docker pull ghcr.io/arctis-engine/arctis:latest
 Lokal bauen:
 
 ```bash
-docker build -t arctis:0.1.0 .
+docker build -t arctis:0.1.1 .
 ```
 
-- **Tag:** `arctis:<version>` an die **Paketversion** koppeln (z. B. `0.1.0` aus `pyproject.toml`). CI publiziert zusätzlich **`latest`** nach Policy in [`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml).  
+- **Tag:** `arctis:<version>` an die **Paketversion** koppeln (z. B. `0.1.1` aus `pyproject.toml`). CI publiziert zusätzlich **`latest`** nach Policy in [`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml).  
 - **Referenz:** [`Dockerfile`](../Dockerfile) — Multi-Stage, non-root, `ENV=prod`, Healthcheck auf `GET /health`.  
 - **Nach dem Start:** `DATABASE_URL` auf Postgres setzen (Prod), **`alembic upgrade head`** gegen diese DB — siehe [`Deployment.md`](Deployment.md).  
 - **Run:** siehe [`Deployment.md`](Deployment.md) Abschnitt Container image.
@@ -39,7 +39,7 @@ python -m build --wheel -o dist
 ```
 
 - Ergebnis: **`dist/arctis-<version>-py3-none-any.whl`** (Version aus `pyproject.toml`).  
-- Installation: `pip install dist/arctis-0.1.0-py3-none-any.whl` oder Publish auf privates/öffentliches Index.  
+- Installation: `pip install dist/arctis-0.1.1-py3-none-any.whl` oder Publish auf privates/öffentliches Index.  
 - **`dist/`** ist in [`.gitignore`](../.gitignore) — Artefakte nicht committen.  
 - **Strategie** (Monorepo vs. späterer Ghost-Split): [`arctis_package_strategy.md`](arctis_package_strategy.md), Releases: [`RELEASE.md`](RELEASE.md).
 
