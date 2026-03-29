@@ -1,5 +1,39 @@
 # Deployment notes
 
+## Infrastructure (staging / production) — A1.1
+
+Production- und **staging**-ähnliche Umgebungen nutzen dieselben **Variablennamen**; Werte (URL, Origins, Secrets) werden pro Umgebung gesetzt. Die **reale** Staging-Laufzeit (Cluster, VM, PaaS) liegt außerhalb dieses Repos — hier die verbindliche Checkliste für Betrieb und Review.
+
+### Erforderliche Konfiguration
+
+| Variable | Rolle |
+|----------|--------|
+| `ENV` | `prod` für produktionsnahes Verhalten (u. a. OpenAPI-Defaults, synthetisches Rate-Limit ohne DB-Eintrag). Staging nutzt typischerweise ebenfalls `prod`, sofern ihr kein separates `staging`-Label im Code führt. |
+| `DATABASE_URL` | SQLAlchemy-URL (empfohlen: Postgres, z. B. `postgresql+psycopg://…`). Ohne erreichbare DB schlagen echte Auth-Pfade fehl ([`security_production.md`](security_production.md)). |
+| `ALLOWED_ORIGINS` | Komma-separierte CORS-Origins der **echten** Frontends (HTTPS); in Prod **kein** Wildcard über `ARCTIS_CORS_WILDCARD_DEV`. |
+| `ARCTIS_AUDIT_STORE` | `jsonl` \| `db` \| `none` — Backend für Audit-Abfragen/Export ([`DR.md`](DR.md)). |
+| `ARCTIS_AUDIT_JSONL_DIR` | Pflicht, wenn `ARCTIS_AUDIT_STORE=jsonl`: beschreibbarer Verzeichnispfad für JSONL-Dateien (Container: Volume mount). Bei `db` bzw. `none` nicht nötig. |
+
+### Migrationen (vor Traffic)
+
+```bash
+export DATABASE_URL="postgresql+psycopg://..."
+alembic upgrade head
+```
+
+Immer **vor** dem ersten Request mit Kundendaten ausführen; bei Deploys idempotent wiederholen. Kein Verlass auf `create_all()` in Prod ([`security_production.md`](security_production.md)).
+
+### Kurzablauf
+
+1. Datenbank bereitstellen, `DATABASE_URL` setzen.  
+2. `alembic upgrade head`.  
+3. `ENV=prod`, `ALLOWED_ORIGINS`, Audit-Variablen und übrige Secrets setzen ([`DEPLOYMENT_CHECKLIST.md`](../DEPLOYMENT_CHECKLIST.md)).  
+4. API starten (`uvicorn` / Container).  
+
+Details zu weiteren Prod-Flags: [`security_production.md`](security_production.md). Recovery: [`DR.md`](DR.md).
+
+---
+
 ## API base URL (OpenAPI servers)
 
 - **Local:** `http://127.0.0.1:8000` (typical `uvicorn` default).

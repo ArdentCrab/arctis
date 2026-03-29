@@ -32,6 +32,8 @@ Das Modul `main.py` ist **Legacy**; mit `ENV=prod` wird sein Import **hart abgel
 | `ARCTIS_DEFAULT_RATE_LIMIT_PER_MINUTE` | API | Synthetisches Limit/Minute, wenn **kein** DB-Rate-Limit-Eintrag existiert; `0` = aus. Unset: Prod **120**, Dev kein synthetisches Cap. |
 | `ARCTIS_GOVERNANCE_CROSS_TENANT` | API | Erlaubt Cross-Tenant-Reads in **Metrics** und **Audit-Export** nur zusammen mit **`system_admin`-Scope** auf dem API-Key (siehe unten). |
 | `DATABASE_URL` | API | Pflicht für echte Auth; ohne Session → `X-API-Key` führt zu **503** (außer Dev+Unsafe-Flag). |
+| `ARCTIS_AUDIT_STORE` | API | `jsonl` \| `db` \| `none` — Audit-Abfrage-Backend; siehe [`Deployment.md`](Deployment.md) (A1.1), [`DR.md`](DR.md). |
+| `ARCTIS_AUDIT_JSONL_DIR` | API | Verzeichnis für JSONL-Audit, **erforderlich** wenn `ARCTIS_AUDIT_STORE=jsonl`. |
 | `SENTRY_DSN` | API | Optional; sensible Header werden im `before_send`-Hook redigiert. |
 
 ## OpenAPI / Docs
