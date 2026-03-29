@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/ArdentCrab/arctis"
+Repository = "https://github.com/arctis-engine/arctis"
 
 [project.scripts]
 ghost = "arctis_ghost.cli:main"

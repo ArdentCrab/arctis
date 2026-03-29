@@ -27,4 +27,4 @@ Paketversion in [`pyproject.toml`](pyproject.toml): **0.1.0**.
 
 - Breaking-Änderungen an API oder `ghost.yaml`-Schema künftig unter `[Unreleased]` → **Changed** / **Removed** mit Migrationshinweis dokumentieren.
 
-<!-- Releases: https://github.com/ArdentCrab/arctis/releases -->
+<!-- Releases: https://github.com/arctis-engine/arctis/releases -->
