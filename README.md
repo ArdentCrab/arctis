@@ -7,7 +7,7 @@
 **API und Ghost:** Die **API** ist die autoritative Ausführungs- und Evidence-Quelle; **Ghost** spricht dieselben Endpunkte (`POST …/execute`, `GET /runs/{id}`) und spiegelt Ergebnisse lokal — **eine** Policy- und Nachweis-Wahrheit auf dem Server.
 
 - **Erster Run (≈30 s):** Abschnitt [Try Arctis in 30 seconds](#try-arctis-in-30-seconds) · ausführlicheres 60‑Sekunden-Storyboard: [`docs/arctis_ghost_demo_60.md`](docs/arctis_ghost_demo_60.md).
-- **Repository:** [`github.com/arctis/arctis`](https://github.com/arctis/arctis) · **GHCR:** `ghcr.io/arctis/arctis` (nach Release-Workflows).
+- **Repository:** [`github.com/arctis-lab/arctis`](https://github.com/arctis-lab/arctis) · **GHCR:** `ghcr.io/arctis-lab/arctis` (nach Release-Workflows).
 - **Version:** siehe [`pyproject.toml`](pyproject.toml) — aktuell **0.1.2** ([`CHANGELOG.md`](CHANGELOG.md)).
 - **Paketinhalt:** ein Wheel umfasst API-, Engine- und Ghost-Code; Strategie für Publish/Split siehe [`docs/arctis_package_strategy.md`](docs/arctis_package_strategy.md).
 - **CI:** GitHub Actions laufen automatisch, sobald das Repository auf GitHub gepusht wird. ([`.github/workflows/ci.yml`](.github/workflows/ci.yml) — PRs und Push auf `main`/`master`.) **Release:** bei Tag `v*` bauen [`.github/workflows/release.yml`](.github/workflows/release.yml) (Wheel, sdist, Checksums) und [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) (Push nach **GHCR**).

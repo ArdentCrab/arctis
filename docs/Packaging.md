@@ -9,12 +9,12 @@ Diese Seite entspricht **A2.1–A2.3**; das **Onboarding-Kit** liegt unter [`cus
 
 ## A2.1 — Docker
 
-**Offizielles Image (GHCR)** nach Release-Tag — `org`/`repo` entsprechen dem GitHub-Repository (kanonisch: `arctis/arctis` → Registry-Pfad kleingeschrieben):
+**Offizielles Image (GHCR)** nach Release-Tag — `org`/`repo` entsprechen dem GitHub-Repository (kanonisch: `arctis-lab/arctis` → Registry-Pfad kleingeschrieben):
 
 ```bash
-docker pull ghcr.io/arctis/arctis:0.1.2
+docker pull ghcr.io/arctis-lab/arctis:0.1.2
 # optional, wenn ihr :latest für stabile Tags pflegt (siehe Workflow):
-docker pull ghcr.io/arctis/arctis:latest
+docker pull ghcr.io/arctis-lab/arctis:latest
 ```
 
 Lokal bauen:

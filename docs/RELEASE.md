@@ -37,23 +37,23 @@ Nach **`git push origin vX.Y.Z`** (nach merge auf `main`/`master`):
 
 **GHCR:** Erstes Push: unter **Packages** im Repo/Org ggf. Sichtbarkeit **public** setzen, damit `docker pull` ohne Login funktioniert.
 
-## Migration zur Organisation arctis (GitHub)
+## Migration zur Organisation (GitHub)
 
-**Reihenfolge (manuell in github.com; reversibel nur begrenzt — alte Org nicht automatisch löschen):**
+Kanonisches Repo: **`arctis-lab/arctis`** · **`https://github.com/arctis-lab/arctis`** · GHCR: **`ghcr.io/arctis-lab/arctis`**.
+
+**Nach Transfer (Checkliste):**
 
 | Schritt | Aktion |
 |---------|--------|
-| 1 | **Organisation erstellen:** Name `arctis`, Plan **Free**, du als **Owner** (oder Einladung annehmen). |
-| 2 | **Repo prüfen:** Alle Branches/Tags/Releases vor Transfer dokumentieren; [Workflows](https://docs.github.com/en/actions/using-workflows/about-workflows) sind im Repo bereits YAML-valide. |
-| 3 | **Secrets:** [Repository-Secrets](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions#creating-secrets-for-a-repository) werden beim **Transfer** ggf. **nicht** übernommen — nach dem Umzug unter **Settings → Secrets and variables → Actions** prüfen und fehlende Werte neu setzen. |
-| 4 | **Transfer:** Repository **Settings → General → Danger zone → Transfer ownership** → Zielorganisation **`arctis`**, Repo-Name **`arctis`**. Nach Transfer: kanonische URL **`https://github.com/arctis/arctis`**. |
-| 5 | **Lokal:** `git remote set-url origin https://github.com/arctis/arctis.git` und `git fetch origin`. |
-| 6 | **GHCR:** Workflows pushen nach **`ghcr.io/<org>/<repo>`** (aus `GITHUB_REPOSITORY`); nach Transfer ist das **`ghcr.io/arctis/arctis`** — kein YAML-Patch nötig. **`workflow_dispatch`** bleibt aktiv. War der Tag **v0.1.2** schon vor dem Transfer gelaufen, kann unter der **neuen** Org einmal **Actions → Docker publish → Run workflow** ausgeführt werden, damit das Image im neuen Namespace landet. |
-| 7 | **Packages:** **Packages** (rechts im Repo oder unter Org) → Container → **Package settings** → **Change visibility** → **Public** (für anonymes Pull). |
-| 8 | **Test:** `docker pull ghcr.io/arctis/arctis:0.1.2` (nach erfolgreichem Release-Tag `v0.1.2`). |
-| 9 | **Alte Organisation:** Nicht automatisch löschen; später manuell entscheiden (Redirects können bestehen bleiben). |
+| 1 | **Lokal:** `git remote set-url origin https://github.com/arctis-lab/arctis.git` und `git fetch origin`. |
+| 2 | **Workflows:** Im Repo unter **Actions** prüfen — erwartet u. a. **CI**, **Release**, **Docker publish**, **Gitleaks** (alle `.yml` unter `.github/workflows/`). |
+| 3 | **Secrets:** Nach Transfer unter **Settings → Secrets and variables → Actions** prüfen; fehlende Secrets neu setzen. |
+| 4 | **GHCR neu befüllen:** Falls nötig **Actions → Docker publish → Run workflow** oder lokal: [`scripts/dispatch_docker_publish.ps1`](../scripts/dispatch_docker_publish.ps1) mit `GITHUB_TOKEN` (siehe Skript-Kopf). |
+| 5 | **Package public:** **Packages** → Container **`arctis`** → **Package settings** → **Change package visibility** → **Public**. |
+| 6 | **Test:** `docker pull ghcr.io/arctis-lab/arctis:0.1.2` (sofern Image existiert und public). |
+| 7 | **Alte Organisation:** Nicht automatisch löschen; manuell entscheiden. |
 
-**Workflow-Berechtigungen:** Als Owner unter **Settings → Actions → General → Workflow permissions** ggf. **Read and write** aktivieren, damit Releases und Packages geschrieben werden.
+**Workflow-Berechtigungen:** **Settings → Actions → General → Workflow permissions** → **Read and write**, damit Releases und Packages geschrieben werden können.
 
 ## Ghost-CLI
 
