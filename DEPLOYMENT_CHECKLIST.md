@@ -43,10 +43,17 @@ Siehe [`docs/DR.md`](docs/DR.md) (Backup-Strategie, Restore, **Verification** / 
 - [ ] **Restore-Test** (DR-Drill) nach DR.md durchgeführt oder mit Datum terminiert; Ergebnis im internen Runbook dokumentiert
 - [ ] **`docs/DR.md`** mit aktuellem Betriebsmodell abgeglichen (Review bei Release oder quartalsweise)
 
+## Launch gates (A1.6)
+
+Siehe [`docs/Launch_readiness.md`](docs/Launch_readiness.md) und [`arctis/scripts/launch_check.py`](../arctis/scripts/launch_check.py).
+
+- [ ] **`python -m arctis.scripts.launch_check`** in **Staging** mit gesetzten Umgebungsvariablen **grün** (Exit 0)
+- [ ] **Playwright:** `npm run test:e2e` unter `dashboard/` — siehe Launch_readiness (aktuell ggf. noch einzurichten)
+- [ ] **Locust:** Kurzlauf wie in `launch_check` erfolgreich; Ziel **&lt; 5 %** Fehlerquote zusätzlich in Logs/Report prüfen
+- [ ] **Statuspage** (oder gleichwertig) für Nutzer sichtbar gepflegt
+- [ ] **Support-Inbox** / Erstkontakt-Kanal betriebsbereit und kommuniziert
+
 ## Weitere Punkte
 
 - [ ] Billing-Webhooks in Stripe-Dashboard zur API-URL konfiguriert (wenn Billing aktiv)
 - [ ] Alembic upgrade head applied (siehe A1.1, falls noch nicht abgehakt)
-- [ ] Playwright smoke tests green
-- [ ] Locust load test stable (<5% errors)
-- [ ] Statuspage updated

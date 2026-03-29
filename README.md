@@ -188,6 +188,7 @@ Python: [Ruff](https://docs.astral.sh/ruff/). UI: ESLint in `ui/pipeline_a/`.
 - Auth & Identity (A1.3): [`docs/Authentication.md`](docs/Authentication.md)
 - Observability (A1.4): [`docs/Observability.md`](docs/Observability.md)
 - Disaster Recovery & Backup (A1.5): [`docs/DR.md`](docs/DR.md)
+- Launch gates (A1.6): [`docs/Launch_readiness.md`](docs/Launch_readiness.md)
 
 ## Control Plane API (optional Launch-Umgebung)
 

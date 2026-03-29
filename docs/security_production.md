@@ -49,6 +49,8 @@ Sentry, Prometheus-Scrape, Grafana, Alerts: [`Observability.md`](Observability.m
 
 Backup, Restore, DR-Drill: [`DR.md`](DR.md) (A1.5).
 
+Launch-Readiness (`launch_check`), Playwright, Locust: [`Launch_readiness.md`](Launch_readiness.md) (A1.6).
+
 ## OpenAPI / Docs
 
 - **Prod (Default):** Doc-Routen sind deaktiviert; direkte Requests auf `/docs`, `/redoc`, `/openapi.json` liefern **404** (kein 401-Hinweis).

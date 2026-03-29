@@ -85,6 +85,12 @@ Backup-Jobs, Restore-Ablauf, DR-Drill, RPO/RTO: **[DR.md](DR.md)** — ergänzt 
 
 ---
 
+## Launch gates (A1.6)
+
+`launch_check`, Playwright, Locust, Statuspage/Support: **[Launch_readiness.md](Launch_readiness.md)**.
+
+---
+
 ## API base URL (OpenAPI servers)
 
 - **Local:** `http://127.0.0.1:8000` (typical `uvicorn` default).
